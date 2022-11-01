@@ -1,0 +1,150 @@
+---
+title: "STOR 320 Project"
+author: "Andy Dong"
+date: "3/4/2022"
+output: html_document
+---
+## R Markdown
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Web Scraping
+
+```{r}
+library(rvest)
+library(tidyverse)
+library(devtools)
+library(noncensus)
+library(ggplot2)
+library(scales)
+```
+
+```{r}
+Hotels <- read_csv(file = "/Users/andydong/Downloads/FinalProject/hotel_booking.csv")
+Hotels2 <- select(Hotels, -c(previous_cancellations, previous_bookings_not_canceled:assigned_room_type, deposit_type:customer_type, name:credit_card)) %>%
+  rename(hotel = hotel, 
+         cancelled = is_canceled, 
+         `lead time` = lead_time, 
+         `year of arrival` = arrival_date_year,
+         `month of arrival` = arrival_date_month,
+         `week number out of a year` = arrival_date_week_number, 
+         `day of arrival` = arrival_date_day_of_month, 
+         `weekend night stay-ins` = stays_in_weekend_nights,
+         `weekday night stay-ins` = stays_in_week_nights,
+         `repeated guest` = is_repeated_guest, 
+         `changes in booking` = booking_changes,
+         `requirements in parking spaces` = required_car_parking_spaces,
+         `special request` = total_of_special_requests, 
+         `reservation status` = reservation_status,
+         `date of reservation` = reservation_status_date)
+Hotels3 <- Hotels2 %>%
+mutate(`length of stay` = `weekday night stay-ins` + `weekend night stay-ins` )
+```
+
+# Question: Does the day of arrival and ADR impact the duration of staying?
+```{r}
+Hotels4 <-  Hotels3 %>%
+  group_by(`day of arrival`) %>%
+  summarise(`length of stay` = mean(`length of stay`))
+
+ggplot(data = Hotels4) +
+  geom_count(mapping = aes(x = `day of arrival` , y = `length of stay` ), color = "blue")+ 
+  labs(x = "Day of the Month", y = "Duration of Stay")
+
+arrange(Hotels3, desc(adr))%>%
+  select(adr)%>%
+  head()
+Hotels5 <- Hotels3 %>%
+  filter(adr < 5400)
+
+ggplot(data = Hotels5) +
+  geom_boxplot(mapping = aes(x = `length of stay` , y = adr, fill = hotel, color = hotel), se = F)+ 
+  labs(x = "Duration of Stay", y = "ADR")
+
+```
+```{r}
+Hotels3 %>%
+  select(`day of arrival`, `length of stay`)
+```
+
+# Question: How much does businesss fluctuate from year to year?
+```{r}
+ggplot(data = Hotels3) +
+  geom_bar(mapping = aes(x = `year of arrival`, fill = hotel), position = position_dodge(width = 0.95))+
+  theme_bw()
+  labs(x = "Year", y = " Number of Bookings")
+```
+
+# Which variable has the greatest influence on the price of the room?
+```{r, warning=F}
+EDAClean = EDAData%>%
+  rename(Type = hotel, Lead= lead_time, Month = arrival_date_month, Day = arrival_date_day_of_month, Country = country, Room = assigned_room_type)%>%
+  mutate(Year = as.character(arrival_date_year), Weeknights = as.integer(stays_in_weekend_nights), Weekdays = as.integer(stays_in_week_nights), Adults = as.integer(adults), Children = as.integer(children), Babies = as.integer(babies), Rate = adr, `Length of stay` = stays_in_weekend_nights + stays_in_week_nights) 
+
+URL.COUNTRY="https://www.iban.com/country-codes"
+
+Country = URL.COUNTRY%>%
+  read_html()%>%
+  html_table(fill=TRUE)%>%
+  .[[1]]%>%
+  select(1,3)
+colnames(Country)=c("country", "Country")
+
+EDA1 = EDAClean%>%
+  select(Type, Lead, Month, Day, Country, Room, Weeknights, Weekdays, Adults, Children, Babies, Rate, `Length of stay`)%>%
+  filter(Rate >= 30 & Rate < 300)%>%
+  mutate(Guests = Adults + Children + Babies, Days = Weeknights + Weekdays)%>%
+  filter(Guests !=0, Days !=0)%>%
+  left_join(Country, by = "Country", na.rm=T)%>%
+  select(Rate, everything())
+
+EDA2 = na.omit(EDA1)
+
+MAE.func=function(actual, predict){
+  resid= actual - predict
+  MAE=mean(abs(resid),na.rm=T)
+  return(MAE)
+}
+var.names = names(EDA2)
+
+MAE.matrix = matrix(NA,length(var.names),2)
+colnames(MAE.matrix) = c("Variable","MAE")
+
+for(VAR in seq_along(var.names)){
+  subset = EDA2[,c("Rate", as.character(var.names[VAR]))]
+  mod = lm(Rate~., data = subset)
+  EDA3 = EDA2%>%
+    add_predictions(mod, var="pred")
+  MAE = MAE.func(EDA3$Rate, EDA3$pred)
+  MAE.matrix[VAR,]=c(names(EDA2)[VAR],MAE)
+}
+
+MAE.matrix = MAE.matrix%>%
+  kbl()%>%
+  kable_minimal()
+
+MAE.matrix
+```
+```{r}
+select(EDA2, `Length of stay`)
+
+```
+
+
+```{r}
+EDA3 = EDA2%>%
+  filter(`Length of stay` < 14)
+newlm2 = lm(Rate~Month + Days + Room, data = EDA3, stroke = 0, alpha = 0.05)
+EDA3%>%
+  add_predictions(newlm2, var = 'fitted')%>%
+  ggplot() + 
+    geom_point(aes(x=Rate,y=fitted)) + 
+    geom_abline(a=0,b=1,color="red",size=2) +
+    xlab("Actual Rate") +
+    ylab("Fitted Rate") +
+    theme_minimal()+facet_wrap(~`Length of stay`, nrow = 2)
+```
+
+-- try splitting if simple variables are not viable 
